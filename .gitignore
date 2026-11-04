@@ -1,0 +1,5 @@
+node_modules/
+vault/
+.state/
+.env
+*.log

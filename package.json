@@ -1,0 +1,22 @@
+{
+  "name": "notes-taker",
+  "version": "1.0.0",
+  "description": "Self-hosted filesystem Markdown workspace",
+  "main": "server.js",
+  "scripts": {
+    "test": "node --test",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "bcryptjs": "^3.0.2",
+    "dompurify": "^3.2.6",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "marked": "^15.0.12"
+  }
+}

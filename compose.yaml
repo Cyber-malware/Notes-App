@@ -1,0 +1,9 @@
+services:
+  notes:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./vault:/data/vault
+      - ./.state:/data/state
+    restart: unless-stopped
