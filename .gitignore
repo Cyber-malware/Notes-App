@@ -1,2 +1,8 @@
 node_modules/
 *.log
+vault/
+.state/
+.env
+.env.*
+!.env.example
+.vercel/

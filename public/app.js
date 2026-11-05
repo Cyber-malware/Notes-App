@@ -1,14 +1,19 @@
 const $=id=>document.getElementById(id);
 let current='',version=null,dirty=false,tree=[],timer,saving=false,conflict=false,selectedFolder='',collapsed=new Set();
-async function api(url,data){const r=await fetch('/api/'+url,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const body=await r.json();if(!r.ok){const e=Error(body.error);e.status=r.status;throw e;}return body;}
-function error(e){$('status').textContent=e.message;alert(e.message);}
+async function api(url,data){const r=await fetch('/api/'+url,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const body=await r.json().catch(()=>({error:'Request failed ('+r.status+'). Please retry.'}));if(!r.ok){const e=Error(body.error);e.status=r.status;throw e;}return body;}
+function notify(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>$('toast').hidden=true,7000);}
+function error(e){$('status').textContent=e.message;notify(e.message);}
+function ask(message,value){return new Promise(resolve=>{const d=$('dialog');$('dialog-title').textContent=value===undefined?'Confirm action':'Make it yours';$('dialog-description').textContent=message;$('dialog-input').hidden=value===undefined;$('dialog-input').value=value||'';d.showModal();const finish=v=>{d.close();resolve(v);};$('dialog-form').onsubmit=e=>{e.preventDefault();finish(value===undefined?true:$('dialog-input').value.trim());};$('dialog-cancel').onclick=()=>finish(value===undefined?false:null);d.oncancel=e=>{e.preventDefault();finish(value===undefined?false:null);};if(value!==undefined)$('dialog-input').focus();});}
+$('sidebar-toggle').onclick=()=>document.body.classList.toggle('sidebar-open');
 const action=fn=>async()=>{try{await fn();}catch(e){error(e);}};
 function resolveLink(p){const plain=p.split('#')[0];const base=current.split('/').slice(0,-1).join('/');let rel=new URL(plain,'http://vault/'+(base?base+'/':'')).pathname.slice(1);rel=decodeURIComponent(rel);return tree.find(x=>!x.folder&&(x.path===rel||x.path===rel+'.md'||x.path===plain||x.path===plain+'.md'))?.path||tree.find(x=>!x.folder&&(x.path.split('/').pop()===plain||x.path.split('/').pop()===plain+'.md'))?.path;}
-function render(){let text=$('editor').value;text=text.replace(/(!?)\[\[([^\]]+)\]\]/g,(_,embed,value)=>{const [target,label]=value.split('|');const p=resolveLink(target);if(embed&&p&&/\.(png|jpe?g|gif|webp)$/i.test(p))return `![${label||target}](/api/file?inline=1&path=${encodeURIComponent(p)})`;return `[${label||target}](#wiki:${encodeURIComponent(target)})`;});$('preview').innerHTML=DOMPurify.sanitize(marked.parse(text));for(const a of $('preview').querySelectorAll('a')){const href=a.getAttribute('href')||'';if(href.startsWith('#wiki:')||(!/^[a-z]+:/i.test(href)&&!href.startsWith('#'))){const target=decodeURIComponent(href.replace(/^#wiki:/,'')),p=resolveLink(target);a.classList.toggle('broken',!p);a.onclick=e=>{e.preventDefault();if(p&&p.endsWith('.md'))openNote(p).catch(error);else if(p)window.open('/api/file?path='+encodeURIComponent(p));else alert('Note not found: '+target);};}else{a.target='_blank';a.rel='noopener noreferrer';}}for(const img of $('preview').querySelectorAll('img')){const src=img.getAttribute('src');if(src&&!/^(https?:|data:|\/api\/)/.test(src)){const p=resolveLink(decodeURIComponent(src));if(p)img.src='/api/file?inline=1&path='+encodeURIComponent(p);}}$('words').textContent=(text.trim()?text.trim().split(/\s+/).length:0)+' words';}
+function render(){let text=$('editor').value;text=text.replace(/(!?)\[\[([^\]]+)\]\]/g,(_,embed,value)=>{const [target,label]=value.split('|');const p=resolveLink(target);if(embed&&p&&/\.(png|jpe?g|gif|webp)$/i.test(p))return `![${label||target}](/api/file?inline=1&path=${encodeURIComponent(p)})`;return `[${label||target}](#wiki:${encodeURIComponent(target)})`;});$('preview').innerHTML=DOMPurify.sanitize(marked.parse(text));for(const a of $('preview').querySelectorAll('a')){const href=a.getAttribute('href')||'';if(href.startsWith('#wiki:')||(!/^[a-z]+:/i.test(href)&&!href.startsWith('#'))){const target=decodeURIComponent(href.replace(/^#wiki:/,'')),p=resolveLink(target);a.classList.toggle('broken',!p);a.onclick=e=>{e.preventDefault();if(p&&/\.md$/i.test(p))openNote(p).catch(error);else if(p)window.open('/api/file?path='+encodeURIComponent(p));else notify('Note not found: '+target);};}else{a.target='_blank';a.rel='noopener noreferrer';}}for(const img of $('preview').querySelectorAll('img')){const src=img.getAttribute('src');if(src&&!/^(https?:|data:|\/api\/)/.test(src)){const p=resolveLink(decodeURIComponent(src));if(p)img.src='/api/file?inline=1&path='+encodeURIComponent(p);}}$('words').textContent=(text.trim()?text.trim().split(/\s+/).length:0)+' words';}
 async function refresh(){tree=await api('tree');const q=$('search').value.trim();drawTree(q?await api('search?q='+encodeURIComponent(q)):tree);}
 function clearNote(){clearTimeout(timer);current='';version=null;dirty=false;conflict=false;$('note').hidden=true;$('empty').hidden=false;$('breadcrumb').textContent='Your workspace';}
 function drawTree(items=tree){
- $('tree').replaceChildren();
+ $('tree').replaceChildren();$('destination').textContent=selectedFolder||'Vault root';
+ $('note-count').textContent=tree.filter(x=>!x.folder&&/\.md$/i.test(x.path)).length;$('folder-count').textContent=tree.filter(x=>x.folder).length;$('file-count').textContent=tree.filter(x=>!x.folder&&!/\.md$/i.test(x.path)).length;
+ $('recent').replaceChildren();for(const entry of tree.filter(x=>!x.folder&&/\.md$/i.test(x.path)).slice(0,4)){const b=document.createElement('button');b.textContent='↗ '+entry.path;b.onclick=action(()=>openNote(entry.path));$('recent').append(b);}
  const rootButton=document.createElement('button');rootButton.textContent='⌂ Vault root';rootButton.onclick=()=>{selectedFolder='';drawTree(items);};rootButton.classList.toggle('active',!selectedFolder);$('tree').append(rootButton);
  for(const x of items.filter(x=>!x.path.split('/').some(p=>p.startsWith('.')))){
   if(!$('search').value.trim()&&[...collapsed].some(p=>x.path.startsWith(p+'/')))continue;
@@ -16,41 +21,83 @@ function drawTree(items=tree){
   const b=document.createElement('button');b.textContent=(x.folder?(collapsed.has(x.path)?'▸ ':'▾ '):'· ')+x.path.split('/').pop();b.style.paddingLeft=6+12*(x.path.split('/').length-1)+'px';b.classList.toggle('active',x.path===(x.folder?selectedFolder:current));b.title=x.path;
   if(x.snippet){const small=document.createElement('small');small.textContent=x.line+' · '+x.snippet;b.append(small);}
   b.onclick=action(async()=>{if(x.folder){selectedFolder=x.path;if(collapsed.has(x.path))collapsed.delete(x.path);else collapsed.add(x.path);drawTree(items);}else if(/\.md$/i.test(x.path))await openNote(x.path);else window.open('/api/file?path='+encodeURIComponent(x.path));});row.append(b);
-  if(x.folder){const menu=document.createElement('button');menu.textContent='⋯';menu.title='Rename, move or delete '+x.path;menu.setAttribute('aria-label',menu.title);menu.onclick=action(async()=>{
-   const operation=prompt('Folder: '+x.path+'\nEnter a new full path to rename/move, or DELETE to delete.',x.path);if(!operation||operation===x.path)return;
-   const affected=current.startsWith(x.path+'/');if(affected&&!await leave())return;
-   if(operation==='DELETE'){if(!confirm('Delete '+x.path+' and everything inside it?'))return;await api('delete',{path:x.path});if(affected)clearNote();if(selectedFolder===x.path||selectedFolder.startsWith(x.path+'/'))selectedFolder='';}
-   else{await api('move',{from:x.path,to:operation});if(affected){current=operation+current.slice(x.path.length);$('breadcrumb').textContent=current;}if(selectedFolder===x.path||selectedFolder.startsWith(x.path+'/'))selectedFolder=operation+selectedFolder.slice(x.path.length);}
+  {const menu=document.createElement('button');menu.textContent='⋯';menu.title='Rename, move or delete '+x.path;menu.setAttribute('aria-label',menu.title);menu.onclick=action(async()=>{
+   const operation=await ask('Item: '+x.path+'\nEnter a new full path to rename/move, or DELETE to delete.',x.path);if(!operation||operation===x.path)return;
+   const affected=current===x.path||current.startsWith(x.path+'/');if(affected&&!await leave())return;
+   if(operation==='DELETE'){if(!await ask('Delete '+x.path+' and everything inside it?'))return;await api('delete',{path:x.path});if(affected)clearNote();if(selectedFolder===x.path||selectedFolder.startsWith(x.path+'/'))selectedFolder='';}
+   else{await api('move',{from:x.path,to:operation});if(affected){current=operation+current.slice(x.path.length);$('breadcrumb').textContent=current;$('title').textContent=current.split('/').pop().replace(/\.md$/i,'');render();}if(selectedFolder===x.path||selectedFolder.startsWith(x.path+'/'))selectedFolder=operation+selectedFolder.slice(x.path.length);}
    collapsed.clear();await refresh();
   });row.append(menu);}$('tree').append(row);
  }
 }
-async function save(){if(!current||!dirty||saving)return; if(conflict)throw Error('External changes detected. Download your draft, then reopen the note.');saving=true;const content=$('editor').value;try{const result=await api('note',{path:current,content,version});version=result.version;dirty=$('editor').value!==content;$('status').textContent=dirty?'Unsaved changes':'All changes saved';}catch(e){conflict=e.status===409;throw e;}finally{saving=false;if(dirty&&!conflict&&$('autosave').checked)timer=setTimeout(()=>save().catch(error),1500);}}
-async function leave(){clearTimeout(timer);if(saving)throw Error('A save is in progress. Please try again.');if(dirty){if(conflict){return confirm('Discard your unsaved draft and load the disk version? Download your draft first to keep it.');}await save();}return true;}
+async function save(){if(!current||!dirty||saving)return; if(conflict)throw Error('External changes detected. Download your draft, then reopen the note.');saving=true;const content=$('editor').value;try{const result=await api('note',{path:current,content,version});version=result.version;dirty=$('editor').value!==content;$('status').textContent=dirty?'Unsaved changes':'All changes saved';}catch(e){conflict=e.status===409;throw e;}finally{saving=false;if(dirty&&!conflict&&$('autosave').checked&&$('status').textContent==='Unsaved changes')timer=setTimeout(()=>save().catch(error),1500);}}
+async function leave(){clearTimeout(timer);if(saving)throw Error('A save is in progress. Please try again.');if(dirty){if(conflict){return await ask('Discard your unsaved draft and load the disk version? Download your draft first to keep it.');}await save();}return true;}
 async function openNote(p){if(!await leave())return;const note=await api('note?path='+encodeURIComponent(p));current=p;selectedFolder=p.split('/').slice(0,-1).join('/');version=note.version;dirty=false;conflict=false;$('editor').value=note.content;$('title').textContent=p.split('/').pop().replace(/\.md$/,'');$('breadcrumb').textContent=p;$('empty').hidden=true;$('note').hidden=false;$('status').textContent='All changes saved';render();drawTree();}
-async function newNote(){if(!await leave())return;let p=prompt('Note path (for example Projects/My idea.md):',(selectedFolder?selectedFolder+'/':'')+'Untitled.md');if(!p)return;if(!/\.md$/i.test(p))p+='.md';await api('note',{path:p,content:'# '+p.split('/').pop().slice(0,-3)+'\n\n',version:null});await refresh();await openNote(p);$('editor').focus();}
-async function init(){const s=await api('session');$('login').hidden=s.authenticated;$('workspace').hidden=!s.authenticated;$('login-help').textContent=s.setup?'Create your private workspace password (12–72 characters).':'Welcome back. Enter your workspace password.';if(s.authenticated)await refresh();}
+async function newNote(){if(!await leave())return;let p=await ask('Note path (for example Projects/My idea.md):',(selectedFolder?selectedFolder+'/':'')+'Untitled.md');if(!p)return;if(!/\.md$/i.test(p))p+='.md';await api('note',{path:p,content:'# '+p.split('/').pop().slice(0,-3)+'\n\n',version:null});await refresh();await openNote(p);$('editor').focus();document.body.classList.remove('sidebar-open');}
+async function init(){const s=await api('session');$('login').hidden=s.authenticated;$('workspace').hidden=!s.authenticated;$('login-help').textContent=s.setup?'Create your private workspace password (10–72 characters).':'Welcome back. Enter your workspace password.';if(s.authenticated)await refresh();}
 $('login-form').onsubmit=async e=>{e.preventDefault();try{await api('login',{password:$('password').value});$('password').value='';await init();}catch(err){$('login-error').textContent=err.message;}};
 $('new').onclick=$('start').onclick=action(newNote);$('save').onclick=action(save);$('refresh').onclick=action(refresh);
 $('autosave').onchange=()=>{clearTimeout(timer);if($('autosave').checked&&dirty&&!conflict)timer=setTimeout(()=>save().catch(error),1000);};
 $('editor').oninput=()=>{dirty=true;render();$('status').textContent='Unsaved changes';clearTimeout(timer);if($('autosave').checked&&!conflict)timer=setTimeout(()=>save().catch(error),1000);};
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{$('panes').className=b.dataset.mode;document.querySelectorAll('[data-mode]').forEach(x=>x.classList.toggle('selected',x===b));});
-$('folder').onclick=action(async()=>{const p=prompt('New folder path:',(selectedFolder?selectedFolder+'/':'')+'New folder');if(p){await api('folder',{path:p});await refresh();}});
-$('rename').onclick=action(async()=>{if(!await leave())return;const p=prompt('New full path (links are not automatically updated):',current);if(p&&p!==current){await api('move',{from:current,to:p});current='';await refresh();await openNote(p);}});
-$('delete').onclick=action(async()=>{clearTimeout(timer);if(saving)throw Error('Wait for the save to finish.');if(confirm('Permanently delete '+current+'?')){await api('delete',{path:current});current='';dirty=false;$('note').hidden=true;$('empty').hidden=false;await refresh();}});
+$('folder').onclick=action(async()=>{const p=await ask('New folder path:',(selectedFolder?selectedFolder+'/':'')+'New folder');if(p){await api('folder',{path:p});await refresh();}});
+$('rename').onclick=action(async()=>{if(!await leave())return;const p=await ask('New full path (links are not automatically updated):',current);if(p&&p!==current){await api('move',{from:current,to:p});current='';await refresh();await openNote(p);}});
+$('delete').onclick=action(async()=>{clearTimeout(timer);if(saving)throw Error('Wait for the save to finish.');if(await ask('Permanently delete '+current+'?')){await api('delete',{path:current});current='';dirty=false;$('note').hidden=true;$('empty').hidden=false;await refresh();}});
 $('download').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('editor').value],{type:'text/markdown'}));a.download=current.split('/').pop();a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
-$('replace').onclick=()=>{const find=prompt('Find text:');if(!find)return;const replacement=prompt('Replace all occurrences with:');if(replacement!==null){$('editor').value=$('editor').value.split(find).join(replacement);$('editor').oninput();}};
+$('replace').onclick=async()=>{const find=await ask('Find text:','');if(!find)return;const replacement=await ask('Replace all occurrences with:','');if(replacement!==null){$('editor').value=$('editor').value.split(find).join(replacement);$('editor').oninput();}};
 let searchTimer;$('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(async()=>{try{const q=$('search').value.trim();if(q)drawTree(await api('search?q='+encodeURIComponent(q)));else drawTree();}catch(e){error(e);}},250);};
 function base64(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=reject;r.readAsDataURL(file);});}
-async function uploadFiles(files,folderMode=false,image=false){const prefix=image?'Attachments':prompt('Upload into folder (blank for vault root):',selectedFolder);if(prefix===null)return;for(const file of files){const p=(prefix?prefix.replace(/\/$/,'')+'/':'')+(folderMode?file.webkitRelativePath:file.name);await api('upload',{path:p,data:await base64(file)});if(image){$('editor').setRangeText('![[ '+p+' ]]'.replace('[[ ','[[').replace(' ]]',']]'),$('editor').selectionStart,$('editor').selectionEnd,'end');$('editor').oninput();}}await refresh();render();}
+let importing=false;
+async function importEntries(entries,prefix='',image=false){
+ if(importing)throw Error('An import is already running');
+ importing=true;let done=0,skipped=0;const failures=[];const notePath=current;
+ try{
+  const existing=new Map(tree.map(x=>[x.path,x]));
+  for(const entry of entries){const p=(prefix?prefix.replace(/\/$/,'')+'/':'')+entry.path;
+   $('status').textContent='Importing '+(done+skipped+failures.length+1)+' / '+entries.length+' · '+p;
+   if(existing.has(p)){skipped++;continue;}
+   try{
+    if(entry.folder)await api('folder',{path:p});else{
+     if(entry.size>2*1024*1024)throw Error('Exceeds the 2 MB file limit');
+     await api('upload',{path:p,data:await entry.data()});
+     if(image&&current===notePath){$('editor').setRangeText('![['+p+']]',$('editor').selectionStart,$('editor').selectionEnd,'end');$('editor').oninput();}
+    }
+    existing.set(p,entry);done++;
+   }catch(e){failures.push(p+': '+e.message);}
+  }
+ }finally{importing=false;await refresh();render();}
+ const summary=done+' imported · '+skipped+' existing skipped · '+failures.length+' failed';$('status').textContent=summary;notify(summary);
+ if(failures.length)await ask('Some files could not be imported:\n'+failures.slice(0,12).join('\n')+(failures.length>12?'\n…and more. Retry the folder to import remaining files.':''));
+}
+async function uploadFiles(files,folderMode=false,image=false){
+ if(!files.length)return;
+ const prefix=image?'Attachments':await ask('Upload into folder (blank for vault root):',selectedFolder);if(prefix===null)return;
+ await importEntries([...files].map(file=>({path:folderMode?file.webkitRelativePath:file.name,size:file.size,data:()=>base64(file)})),prefix,image);
+}
 for(const [button,input] of [['upload','files'],['upload-folder','folders'],['import','zip'],['image','images']])$(button).onclick=()=>{$(input).value='';$(input).click();};
 $('files').onchange=action(()=>uploadFiles($('files').files));$('folders').onchange=action(()=>uploadFiles($('folders').files,true));$('images').onchange=action(()=>uploadFiles($('images').files,false,true));
-$('zip').onchange=action(async()=>{if($('zip').files[0]){await api('import',{data:await base64($('zip').files[0])});await refresh();$('status').textContent='Vault imported';}});
+$('zip').onchange=action(async()=>{
+ const file=$('zip').files[0];if(!file)return;if(file.size>50*1024*1024)throw Error('ZIP files must be under 50 MB');
+ const prefix=await ask('Import ZIP into folder (blank for vault root):',selectedFolder);if(prefix===null)return;
+ let total=0,count=0;
+ const contents=fflate.unzipSync(new Uint8Array(await file.arrayBuffer()),{filter:entry=>{
+  if(++count>10000||(total+=entry.originalSize)>100*1024*1024)throw Error('ZIP exceeds 100 MB expanded or 10,000 entries');
+  if(entry.name.startsWith('/')||entry.name.includes('\\')||entry.name.split('/').some(p=>p==='..'||p==='.')||entry.name.includes(':'))throw Error('Unsafe ZIP path: '+entry.name);
+  return true;
+ }});
+ const entries=Object.entries(contents).sort(([a],[b])=>a.localeCompare(b)).map(([p,data])=>({path:p.replace(/\/$/,''),folder:p.endsWith('/'),size:data.length,data:()=>base64(new Blob([data]))}));
+ await importEntries(entries,prefix);
+});
+$('export').onclick=async e=>{e.preventDefault();try{
+ const entries=await api('tree'),zip={};let bytes=0;
+ for(let i=0;i<entries.length;i++){const item=entries[i];$('status').textContent='Exporting '+(i+1)+' / '+entries.length;if(item.folder)zip[item.path+'/']=new Uint8Array();else{const r=await fetch('/api/file?path='+encodeURIComponent(item.path));if(!r.ok)throw Error('Could not export '+item.path);const data=new Uint8Array(await r.arrayBuffer());bytes+=data.length;if(bytes>100*1024*1024)throw Error('Browser export limit is 100 MB');zip[item.path]=data;}}
+ const blob=new Blob([fflate.zipSync(zip)]);const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='fieldnotes-vault.zip';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);$('status').textContent='Vault exported';
+ }catch(err){error(err);}};
 $('editor').addEventListener('paste',e=>{const images=[...e.clipboardData.files].filter(f=>f.type.startsWith('image/'));if(images.length){e.preventDefault();uploadFiles(images,false,true).catch(error);}});
 $('editor').ondragover=e=>e.preventDefault();$('editor').ondrop=e=>{e.preventDefault();uploadFiles([...e.dataTransfer.files],false,true).catch(error);};
 $('logout').onclick=action(async()=>{if(await leave()){await api('logout',{});location.reload();}});
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();save().catch(error);}});
 window.onbeforeunload=e=>{if(dirty){e.preventDefault();e.returnValue='';}};
-setInterval(async()=>{if($('workspace').hidden||saving)return;try{await refresh();if(current){const polledPath=current,polledVersion=version;const disk=await api('note?path='+encodeURIComponent(polledPath));if(current!==polledPath||version!==polledVersion||saving)return;if(disk.version!==version){if(dirty){conflict=true;clearTimeout(timer);$('status').textContent='Changed on disk · download draft, then reopen to reload';}else{version=disk.version;$('editor').value=disk.content;render();$('status').textContent='Updated from disk';}}}}catch(e){$('status').textContent=e.message;}},5000);
+setInterval(async()=>{if($('workspace').hidden||saving||importing||document.hidden)return;try{await refresh();if(current){const polledPath=current,polledVersion=version;const disk=await api('note?path='+encodeURIComponent(polledPath));if(current!==polledPath||version!==polledVersion||saving)return;if(disk.version!==version){if(dirty){conflict=true;clearTimeout(timer);$('status').textContent='Changed on disk · download draft, then reopen to reload';}else{version=disk.version;$('editor').value=disk.content;render();$('status').textContent='Updated from disk';}}}}catch(e){$('status').textContent=e.message;}},30000);
 init().catch(error);
 

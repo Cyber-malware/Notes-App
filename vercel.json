@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "builds": [{"src":"api/index.js","use":"@vercel/node","config":{"includeFiles":["public/**","node_modules/marked/lib/**","node_modules/dompurify/dist/**","node_modules/fflate/umd/**"]}}],
+  "routes": [{"src":"/(.*)","dest":"api/index.js"}]
+}

@@ -1,1 +1,0 @@
-For [reverse](https://www.revshells.com) shells

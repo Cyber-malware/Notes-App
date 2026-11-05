@@ -33,7 +33,17 @@ test('authenticated vault lifecycle and safety',async()=>{
  assert.equal((await request('upload',{path:'Attachments/test.txt',data:'aGVsbG8='})).status,200);
  assert.equal((await request('upload',{path:'Attachments/test.txt',data:'YQ=='})).status,400);
  assert.equal((await request('search?q=External')).status,200);
- r=await request('export');assert.equal(r.status,200);assert.equal(Buffer.from(await r.arrayBuffer()).subarray(0,2).toString(),'PK');
+ for(const hiddenPath of ['.obsidian/app.json','.hidden.md','.obsidian/images/icon.png']){
+ const content=Buffer.from('hidden file content');
+ assert.equal((await request('upload',{path:hiddenPath,data:content.toString('base64')})).status,200);
+ for(const suffix of ['', '&inline=1']){
+ const download=await request('file?path='+encodeURIComponent(hiddenPath)+suffix);
+ assert.equal(download.status,200,'Hidden vault file must be downloadable: '+hiddenPath);
+ assert.deepEqual(Buffer.from(await download.arrayBuffer()),content);
+ }
+ }
+ r=await request('export');assert.equal(r.status,200);const archive=Buffer.from(await r.arrayBuffer());assert.equal(archive.subarray(0,2).toString(),'PK');
+ assert.equal(new (require('adm-zip'))(archive).readAsText('.obsidian/app.json'),'hidden file content');
  assert.equal((await request('move',{from:'Projects/Hello.md',to:'Projects/Renamed.md'})).status,200);
  assert.equal((await request('delete',{path:'Projects/Renamed.md'})).status,200);
  assert.equal((await request('delete',{path:''})).status,400);
